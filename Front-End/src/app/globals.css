@@ -1,0 +1,58 @@
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap');
+
+@import "tailwindcss";
+
+@theme {
+  --color-green:      #b8f53d;
+  --color-green-dark: #8ec22a;
+  --color-black:      #0a0a0a;
+  --color-cream:      #f5f0e8;
+  --color-gray-1:     #111111;
+  --color-gray-2:     #1a1a1a;
+  --color-gray-3:     #2a2a2a;
+  --color-muted:      #666666;
+
+  --font-display: 'Bebas Neue', sans-serif;
+  --font-sans:    'DM Sans', sans-serif;
+}
+
+@layer base {
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background-color: #0a0a0a;
+    color: #f5f0e8;
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 300;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.03;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  ::-webkit-scrollbar       { width: 6px; }
+  ::-webkit-scrollbar-track { background: #0a0a0a; }
+  ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+}
+
+@layer utilities {
+  .font-display { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.05em; }
+  .animate-fade-up { animation: fade-up 0.7s ease forwards; }
+  .animate-pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.25; }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
