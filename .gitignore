@@ -1,0 +1,5 @@
+# Ignorar carpeta de videos pesados y dataset
+Data-Set/
+*.mp4
+*.mov
+*.avi
