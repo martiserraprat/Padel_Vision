@@ -20,6 +20,6 @@ arxiu_sortida = "C:/Users/Serra/Documents/vcprojecte/Data-Set/padel-data-labels/
 
 # Exemple: Des del segon 15 fins al minut 20 (1200 segons)
 temps_inici = 15
-temps_final = 120  # Convertim els 20 minuts a segons
+temps_final = 120
 
 retallar_video(arxiu_entrada, arxiu_sortida, temps_inici, temps_final)

@@ -27,8 +27,6 @@ import cv2
 import numpy as np
 from collections import defaultdict, deque
 
-# ─── Importa tot el teu pipeline ─────────────────────────────────────────────
-# Ajusta el nom del mòdul al nom real del teu fitxer (sense .py)
 try:
     from main import (
         Homography, Tracker, StaticZoneFilter, RoiFilter,
@@ -193,21 +191,52 @@ def validate_with_pipeline(video_path: str, csv_path: str,
 
     gt_frames = gt_all[gt_video]
 
+    # ── Detectar offset: primer frame del CSV ──────────────────────────────
+    # Els noms de frame al CSV son "frame_XXXXXX.PNG"
+    # Extraiem el número mínim per saber des d'on comença el GT
+    frame_numbers_in_csv = []
+    for fname in gt_frames.keys():
+        try:
+            num = int(''.join(filter(str.isdigit, fname.split('.')[0])))
+            frame_numbers_in_csv.append(num)
+        except ValueError:
+            pass
+
+    if frame_numbers_in_csv:
+        first_gt_frame = min(frame_numbers_in_csv)
+        last_gt_frame  = max(frame_numbers_in_csv)
+        # El vídeo està retallat: frame 1 del vídeo = first_gt_frame del CSV
+        # Per tant: nom_csv = frame_video + (first_gt_frame - 1)
+        frame_offset = first_gt_frame - 1  # ex: 449 si CSV comença a frame_000450
+        print(f"[INFO] CSV cobreix frames {first_gt_frame} → {last_gt_frame}")
+        print(f"[INFO] Offset aplicat: frame_video + {frame_offset} = frame_csv")
+    else:
+        first_gt_frame = 1
+        last_gt_frame  = 999999
+        frame_offset   = 0
+        print("[WARN] No s'ha pogut detectar l'offset. Usant offset 0.")
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"[ERROR] No es pot obrir: {video_path}")
         return
 
+    fps_video = cap.get(cv2.CAP_PROP_FPS) or 30.0
+
     ret, first_frame = cap.read()
     if not ret:
-        print("[ERROR] Vídeo buit.")
+        print("[ERROR] No s'ha pogut llegir el frame inicial.")
+        cap.release()
         return
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # rebobina al principi del vídeo
 
     # ── Inicialitzar pipeline ──
     homo           = Homography()
     tracker        = Tracker(max_players=MAX_PLAYERS)
     static_filter  = StaticZoneFilter(warmup_frames=90)
     roi_filter     = RoiFilter(first_frame.shape, predefined_polys=ROI_EXCLUDE)
+    roi_filter.setup_interactive(first_frame)
     temporal_filter= TemporalConsistencyFilter(window=5, min_hits=3)
     backSub        = cv2.createBackgroundSubtractorMOG2(
                          history=1700, varThreshold=100, detectShadows=True)
@@ -225,10 +254,8 @@ def validate_with_pipeline(video_path: str, csv_path: str,
     id_switches = 0
     frame_results = []
 
-    fps_video = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    frame_idx = 0  # tornem a comptar des de 0 (ja hem llegit el primer frame)
-
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # rebobina
+    # frame_idx compta els frames del vídeo (comença a 1)
+    frame_idx = 0
 
     print(f"\n[INFO] Processant '{video_path}'... Prem 'q' per aturar.\n")
 
@@ -238,6 +265,12 @@ def validate_with_pipeline(video_path: str, csv_path: str,
             break
 
         frame_idx += 1
+
+        # Nom de frame al CSV: frame_video (1,2,3...) + offset = frame_csv
+        # Ex: vídeo retallat a s15 → frame 1 del vídeo = frame_000450 del CSV
+        frame_csv  = frame_idx + frame_offset
+        frame_name = f"frame_{frame_csv:06d}.PNG"
+        gt_boxes   = gt_frames.get(frame_name, [])
 
         # ── Pipeline de detecció ──
         fg = backSub.apply(frame)
@@ -249,33 +282,31 @@ def validate_with_pipeline(video_path: str, csv_path: str,
         fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, kernel_open)
         active_tracks = tracker.update(fg)
 
-        det_boxes = [t["bbox"] for t in active_tracks]   # (x,y,w,h)
+        det_boxes = [t["bbox"] for t in active_tracks]
 
-        # ── Busca frame GT corresponent ──
-        # El CSV usa noms com "frame_000450.PNG"; calcula el nom esperat
-        frame_name = f"frame_{frame_idx:06d}.PNG"
-        gt_boxes = gt_frames.get(frame_name, [])
-
-        # ── Matching ──
+        # ── Matching GT ↔ Deteccions ──
         tp, fp, fn, ious = match_detections(gt_boxes, det_boxes, iou_thresh)
         total_tp += tp
         total_fp += fp
         total_fn += fn
         all_iou.extend(ious)
         frame_results.append({
-            "frame": frame_idx, "gt": len(gt_boxes),
+            "frame": frame_csv, "gt": len(gt_boxes),
             "det": len(det_boxes), "tp": tp, "fp": fp, "fn": fn
         })
 
+        # Atura quan acabin els frames del CSV
+        if frame_csv >= last_gt_frame:
+            print(f"[INFO] Finalitzat: últim frame GT ({last_gt_frame}) processat.")
+            break
+
         # ── Visualització opcional ──
         if show:
-            tp_det_idx = set(range(tp))   # simplificació: primers tp són TP
+            tp_det_idx = set(range(tp))
             vis = draw_validation(frame, gt_boxes, det_boxes, tp_det_idx)
-
-            # Overlay mètriques
             prec = tp/(tp+fp) if (tp+fp) > 0 else 0
             rec  = tp/(tp+fn) if (tp+fn) > 0 else 0
-            cv2.putText(vis, f"Frame {frame_idx} | GT:{len(gt_boxes)} Det:{len(det_boxes)}",
+            cv2.putText(vis, f"Frame vídeo:{frame_idx} CSV:{frame_csv} | GT:{len(gt_boxes)} Det:{len(det_boxes)}",
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
             cv2.putText(vis, f"TP:{tp} FP:{fp} FN:{fn} | Prec:{prec:.2f} Rec:{rec:.2f}",
                         (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,255,200), 2)

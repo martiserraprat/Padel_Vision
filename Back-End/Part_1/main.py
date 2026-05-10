@@ -14,10 +14,10 @@ REAL_COORDS = np.float32([
     [0,  20]
 ])
 
-MIN_AREA = 1800
-MAX_AREA = 18000
-IOU_THRESHOLD = 0.28
-MAX_LOST_FRAMES = 20
+MIN_AREA = 1400
+MAX_AREA = 17000
+IOU_THRESHOLD = 0.30
+MAX_LOST_FRAMES = 30
 MAX_PLAYERS = 4
 
 PLAYER_COLORS = [
@@ -34,12 +34,6 @@ HEATMAP_COLORMAPS = [
     cv2.COLORMAP_SPRING,
 ]
 
-# ------------------------------------------
-# ROI: polígons a EXCLOURE de la màscara
-# Ajusta aquestes coordenades al teu vídeo.
-# Cada entrada és un polígon [N x 2] en píxels.
-# Deixa la llista buida [] si no en vols cap.
-# ------------------------------------------
 ROI_EXCLUDE = [
     # Exemple: franja superior on hi ha el vidre del fons
     # np.array([[0, 0], [1920, 0], [1920, 120], [0, 120]], dtype=np.int32),
@@ -543,7 +537,7 @@ if __name__ == "__main__":
     # Opció A — polígons predefinits a ROI_EXCLUDE (dalt del fitxer)
     # Opció B — dibuix interactiu en iniciar (descomenta la línia setup_interactive)
     roi_filter = RoiFilter(frame.shape, predefined_polys=ROI_EXCLUDE)
-    # roi_filter.setup_interactive(frame)   # ← descomenta per dibuixar manualment
+    roi_filter.setup_interactive(frame)   # ← descomenta per dibuixar manualment
 
     # Filtre 3: consistència temporal (window=5, cal aparèixer a ≥3 frames)
     temporal_filter = TemporalConsistencyFilter(window=5, min_hits=3)
