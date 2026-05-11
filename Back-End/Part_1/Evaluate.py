@@ -1,13 +1,6 @@
 """
 Evaluate.py
-===========
-Valida el tracker comparant les deteccions amb les anotacions GT del CSV.
-
-Ús:
-    python Evaluate.py \
-        --video  Data-Set/padel-data-labels/2022_BCN_FinalM_Retallat_1.mp4 \
-        --csv    Data-Set/padel-data-labels/GT_Retallat_15_120.csv \
-        --show
+python Evaluate.py --video ../../Data-Set/padel-data-labels/2022_BCN_FinalM_Retallat_1.mp4 --csv ../../Data-Set/padel-data-labels/GT_Retallat_15_120.csv --show
 """
 
 import argparse

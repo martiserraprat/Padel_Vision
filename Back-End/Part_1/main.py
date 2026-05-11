@@ -34,7 +34,28 @@ HEATMAP_COLORMAPS = [
     cv2.COLORMAP_SPRING,
 ]
 
-ROI_EXCLUDE = []
+ROI_EXCLUDE = [
+    # Marcador (cantonada sup-esq)
+    np.array([[0, 55], [260, 55], [260, 145], [0, 145]], dtype=np.int32),
+
+    # Hashtag / text inferior marcador
+    np.array([[0, 145], [200, 145], [200, 175], [0, 175]], dtype=np.int32),
+
+    # Franja publicitat fons superior (Adeslas, Estrella Damm...)
+    np.array([[350, 130], [1100, 130], [1100, 225], [350, 225]], dtype=np.int32),
+
+    # Franja publicitat inferior (bitpanda)
+    np.array([[0, 730], [1920, 730], [1920, 810], [0, 810]], dtype=np.int32),
+
+    # Cristall esquerre (públic i reflexos)
+    np.array([[0, 200], [130, 200], [130, 720], [0, 720]], dtype=np.int32),
+
+    # Cristall dret
+    np.array([[1790, 200], [1920, 200], [1920, 720], [1790, 720]], dtype=np.int32),
+
+    # Zona fons superior (darrere la xarxa, públic i cotxe)
+    np.array([[130, 130], [1790, 130], [1790, 270], [130, 270]], dtype=np.int32),
+]
 
 # Paràmetres del buffer de confiança
 MIN_SCORE_TO_TRACK   = 8.0   # score mínim per frame per crear candidatura
