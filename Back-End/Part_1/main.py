@@ -44,8 +44,11 @@ ROI_EXCLUDE = [
     # Franja publicitat fons superior (Adeslas, Estrella Damm...)
     np.array([[350, 130], [1100, 130], [1100, 225], [350, 225]], dtype=np.int32),
 
-    # Franja publicitat inferior (bitpanda)
-    np.array([[0, 730], [1920, 730], [1920, 810], [0, 810]], dtype=np.int32),
+    # Publicitat inferior esquerra
+    np.array([[0, 750], [300, 750], [300, 810], [0, 810]], dtype=np.int32),
+
+    # Publicitat inferior dreta  
+    np.array([[1620, 750], [1920, 750], [1920, 810], [1620, 810]], dtype=np.int32),
 
     # Cristall esquerre (públic i reflexos)
     np.array([[0, 200], [130, 200], [130, 720], [0, 720]], dtype=np.int32),
