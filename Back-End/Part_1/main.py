@@ -3,10 +3,7 @@ import numpy as np
 import math
 from collections import deque
 
-# ==========================================
 # 1. CONSTANTS I CONFIGURACIÓ
-# ==========================================
-
 REAL_COORDS = np.float32([
     [0,  0],
     [10, 0],
@@ -35,28 +32,13 @@ HEATMAP_COLORMAPS = [
 ]
 
 ROI_EXCLUDE = [
-    # Marcador (cantonada sup-esq)
     np.array([[0, 55], [260, 55], [260, 145], [0, 145]], dtype=np.int32),
-
-    # Hashtag / text inferior marcador
     np.array([[0, 145], [200, 145], [200, 175], [0, 175]], dtype=np.int32),
-
-    # Franja publicitat fons superior (Adeslas, Estrella Damm...)
     np.array([[350, 130], [1100, 130], [1100, 225], [350, 225]], dtype=np.int32),
-
-    # Publicitat inferior esquerra
     np.array([[0, 750], [300, 750], [300, 810], [0, 810]], dtype=np.int32),
-
-    # Publicitat inferior dreta  
     np.array([[1620, 750], [1920, 750], [1920, 810], [1620, 810]], dtype=np.int32),
-
-    # Cristall esquerre (públic i reflexos)
     np.array([[0, 200], [130, 200], [130, 720], [0, 720]], dtype=np.int32),
-
-    # Cristall dret
     np.array([[1790, 200], [1920, 200], [1920, 720], [1790, 720]], dtype=np.int32),
-
-    # Zona fons superior (darrere la xarxa, públic i cotxe)
     np.array([[130, 130], [1790, 130], [1790, 270], [130, 270]], dtype=np.int32),
 ]
 
@@ -73,10 +55,7 @@ def get_player_colormap(player_id):
     return HEATMAP_COLORMAPS[(player_id - 1) % len(HEATMAP_COLORMAPS)]
 
 
-# ==========================================
 # 2. QUADRANTS I PROBABILITATS
-# ==========================================
-
 PLAYER_QUADRANT = {
     1: ("top",    "left"),
     2: ("top",    "right"),
@@ -111,10 +90,7 @@ def quadrant_probability(player_id, pos_m, last_pos_m,
     return w_quadrant + side_score + w_dist * max(0.0, 1.0 - dist / max_dist)
 
 
-# ==========================================
 # 3. HOMOGRAFIA
-# ==========================================
-
 class Homography:
     def __init__(self):
         self.H     = None
@@ -169,10 +145,7 @@ class Homography:
         return cv2.perspectiveTransform(pt, self.H_inv)[0][0].astype(int)
 
 
-# ==========================================
 # 4. FILTRES
-# ==========================================
-
 class StaticZoneFilter:
     def __init__(self, warmup_frames=90):
         self.warmup_frames = warmup_frames
@@ -234,10 +207,7 @@ def edge_gate(fg_mask, frame, low=30, high=90, dilate_px=15):
     return cv2.bitwise_and(fg_mask, cv2.dilate(edges, kernel, iterations=2))
 
 
-# ==========================================
 # 5. MOG2 DUAL + DETECTOR DE PAUSA + MEDIANA
-# ==========================================
-
 class DualRateMOG2:
     def __init__(self, history_play=400, var_threshold=60,
                  lr_play=0.003, lr_pause=0.0, motion_thresh=600):
@@ -333,10 +303,7 @@ class MedianBackground:
             print(f"[MEDIAN BG] Carregat: {path}")
 
 
-# ==========================================
 # 6. BUFFER DE CONFIANÇA PER A ASSIGNACIÓ
-# ==========================================
-
 class CandidateTrack:
     def __init__(self, player_id, det, score, pos_m):
         self.player_id         = player_id
@@ -451,10 +418,7 @@ class AssignmentBuffer:
         return dict(self._candidates)
 
 
-# ==========================================
 # 7. TRACKER
-# ==========================================
-
 def compute_iou(boxA, boxB):
     ax, ay, aw, ah = boxA
     bx, by, bw, bh = boxB
@@ -605,10 +569,7 @@ class Tracker:
         return ghosts
 
 
-# ==========================================
 # 8. HEATMAP
-# ==========================================
-
 class PlayerHeatmap:
     def __init__(self, resolution=80):
         self.res     = resolution
@@ -688,9 +649,7 @@ class PlayerHeatmap:
         print(f"[HEATMAP] Combinat guardat: {path}")
 
 
-# ==========================================
 # 9. MAIN
-# ==========================================
 
 if __name__ == "__main__":
     video_path    = "Data-Set/padel-data-labels/2022_BCN_FinalM_Retallat_1.mp4"
@@ -840,5 +799,14 @@ if __name__ == "__main__":
 
     cap.release()
     cv2.destroyAllWindows()
-    heatmap.save_individual("heatmap_padel")
-    heatmap.save_combined("heatmap_padel_combinat.png")
+    heatmap.save_individual("E:\VC-PG\Padel_Vision\Out\Classic\heatmap_padel")
+    heatmap.save_combined("E:\VC-PG\Padel_Vision\Out\Classic\heatmap_padel_combinat.png")
+
+    """
+    Frame → MOG2 + Mediana → bitwise_or
+      → ROI filter → Static filter → Temporal filter → Edge gate
+      → findContours → filtrar per àrea i proporció
+      → Tracker: matching IoU/distància → Buffer confiança → IDs
+      → Homografia → Heatmap
+    
+    """

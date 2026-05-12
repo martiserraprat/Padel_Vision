@@ -236,5 +236,5 @@ if __name__ == "__main__":
 
     cap.release()
     cv2.destroyAllWindows()
-    heatmap.save_individual("heatmap_yolo")
-    heatmap.save_combined("heatmap_yolo_combinat.png")
+    heatmap.save_individual("E:\VC-PG\Padel_Vision\Out\YOLO\heatmap_yolo")
+    heatmap.save_combined("E:\VC-PG\Padel_Vision\Out\YOLO\heatmap_yolo_combinat.png")
