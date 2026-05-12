@@ -3,3 +3,6 @@ Data-Set/
 *.mp4
 *.mov
 *.avi
+.venv/
+__pycache__/
+*.pyc
