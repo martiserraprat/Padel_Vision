@@ -554,10 +554,11 @@ class Tracker:
 
 
 # 8. HEATMAP ──────────────────────────────────────────────────────────────────
-
+ 
+# Colormaps professionals (comencen en negre, cap a color brillant)
 PLAYER_CMAPS = [
     cv2.COLORMAP_INFERNO,   # J1: negre → morat → taronja → blanc
-    cv2.COLORMAP_VIRIDIS,   # J2: morat → verd → groc
+    cv2.COLORMAP_TURBO,     # J2: blau → cian → verd → groc → roig (alt contrast)
     cv2.COLORMAP_OCEAN,     # J3: negre → blau → blanc
     cv2.COLORMAP_HOT,       # J4: negre → roig → groc → blanc
 ]
@@ -572,14 +573,6 @@ PLAYER_COLORS_SOLID = [
  
  
 class PlayerHeatmap:
-    """
-    Heatmap de presència per jugador amb acumulació gaussiana contínua.
-    - Kernel gaussià 2D pre-calculat (no cercles binaris)
-    - Normalització al percentil 99 + correcció gamma
-    - Colormaps professionals amb fons fosc
-    - Crea les carpetes de destí automàticament
-    """
- 
     def __init__(self, resolution: int = 80, sigma_m: float = 0.35):
         self.res  = resolution
         self.w_px = 10 * resolution
@@ -625,7 +618,11 @@ class PlayerHeatmap:
  
     # ── Processament ─────────────────────────────────────────────────────────
  
-    def _process(self, raw: np.ndarray, gamma: float = 0.5):
+    def _process(self, raw: np.ndarray, gamma: float = 0.5, cutoff: float = 0.04):
+        """
+        cutoff: fracció mínima d'activitat per sota la qual es força negre.
+                Elimina el "rectangle" de fons que alguns colormaps generen.
+        """
         if raw.max() == 0:
             return None
         blurred = cv2.GaussianBlur(raw, (0, 0), sigmaX=2.0)
@@ -634,7 +631,10 @@ class PlayerHeatmap:
             p99 = float(blurred.max())
         if p99 == 0:
             return None
-        norm = np.power(np.clip(blurred / p99, 0.0, 1.0), gamma)
+        norm = np.clip(blurred / p99, 0.0, 1.0)
+        # Elimina el halo de fons: valors per sota del cutoff → 0 pur
+        norm[norm < cutoff] = 0.0
+        norm = np.power(norm, gamma)
         return (norm * 255).astype(np.uint8)
  
     # ── Pista ─────────────────────────────────────────────────────────────────
@@ -667,7 +667,10 @@ class PlayerHeatmap:
                 print(f"[HEATMAP] J{pid}: sense dades, omès.")
                 continue
  
-            colored = cv2.applyColorMap(norm, PLAYER_CMAPS[(pid - 1) % len(PLAYER_CMAPS)])
+            cmap_id = PLAYER_CMAPS[(pid - 1) % len(PLAYER_CMAPS)]
+            colored = cv2.applyColorMap(norm, cmap_id)
+            # Zones sense dades → negre pur (alguns colormaps mapegen 0 a morat)
+            colored[norm == 0] = (0, 0, 0)
             self.draw_court(colored, alpha=0.75)
             cv2.putText(
                 colored, f"Jugador {pid}",
@@ -719,6 +722,8 @@ class PlayerHeatmap:
                 combined[:, :, c][mask] / weight[mask], 0, 255)
  
         result = combined.astype(np.uint8)
+        # Zones sense cap jugador → negre pur
+        result[weight == 0] = (0, 0, 0)
         self.draw_court(result, alpha=0.70)
  
         # Llegenda amb mostra del gradient de cada jugador
@@ -749,7 +754,6 @@ class PlayerHeatmap:
             print(f"[HEATMAP] Combinat guardat -> {path}")
         else:
             print(f"[HEATMAP] ERROR guardant combinat -> {path}")
-
 
 # 9. MAIN ─────────────────────────────────────────────────────────────────────
 

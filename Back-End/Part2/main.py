@@ -236,5 +236,8 @@ if __name__ == "__main__":
 
     cap.release()
     cv2.destroyAllWindows()
-    heatmap.save_individual("E:\VC-PG\Padel_Vision\Out\YOLO\heatmap_yolo")
-    heatmap.save_combined("E:\VC-PG\Padel_Vision\Out\YOLO\heatmap_yolo_combinat.png")
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUT_DIR = os.path.join(_SCRIPT_DIR, "..", "..", "Out", "YOLO")
+heatmap.save_individual(os.path.join(OUT_DIR, "heatmap_yolo"))
+heatmap.save_combined(os.path.join(OUT_DIR, "heatmap_yolo_combinat.png"))
