@@ -47,12 +47,21 @@ YOLO_MODEL     = "yolov8n.pt"
 CONF_THRESHOLD = 0.4
 IOU_NMS        = 0.5
 
-PART1_RESULTS = {
-    "TP": 8573,
-    "FP": 247,
-    "FN": 4023,
-}
+PART1_REPORT_CSV = "../Part_1/validation_report.csv"
 
+def load_part1_results(path):
+    if not os.path.exists(path):
+        print(f"[WARN] No s'ha trobat el report de Part 1: {path}")
+        return None
+    tp = fp = fn = 0
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            tp += int(row["tp"])
+            fp += int(row["fp"])
+            fn += int(row["fn"])
+    return {"TP": tp, "FP": fp, "FN": fn}
+
+PART1_RESULTS = load_part1_results(PART1_REPORT_CSV)
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -124,6 +133,10 @@ def print_summary(tp, fp, fn, iou_list):
 
 
 def print_comparison(tp2, fp2, fn2, iou_list2):
+    if PART1_RESULTS is None:
+        print("\n[INFO] No hi ha resultats de Part 1 per comparar.\n")
+        return
+    
     tp1, fp1, fn1 = PART1_RESULTS["TP"], PART1_RESULTS["FP"], PART1_RESULTS["FN"]
     p1, r1, f1_1, _, mota1 = calc_metrics(tp1, fp1, fn1, [])
     p2, r2, f1_2, miou2, mota2 = calc_metrics(tp2, fp2, fn2, iou_list2)
