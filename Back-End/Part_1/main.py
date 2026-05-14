@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import math
+import os
 from collections import deque
 
 # 1. CONSTANTS I CONFIGURACIÓ
@@ -24,13 +25,6 @@ PLAYER_COLORS = [
     (180,   0, 255),
 ]
 
-HEATMAP_COLORMAPS = [
-    cv2.COLORMAP_SUMMER,
-    cv2.COLORMAP_HOT,
-    cv2.COLORMAP_COOL,
-    cv2.COLORMAP_SPRING,
-]
-
 ROI_EXCLUDE = [
     np.array([[0, 55], [260, 55], [260, 145], [0, 145]], dtype=np.int32),
     np.array([[0, 145], [200, 145], [200, 175], [0, 175]], dtype=np.int32),
@@ -43,16 +37,13 @@ ROI_EXCLUDE = [
 ]
 
 # Paràmetres del buffer de confiança
-MIN_SCORE_TO_TRACK   = 8.0   # score mínim per frame per crear candidatura
-CONFIRM_THRESHOLD    = 45.0  # score acumulat per confirmar assignació
-MAX_CANDIDATE_FRAMES = 20    # frames màxims que una candidatura pot esperar
-CANDIDATE_MAX_DIST   = 55    # distància màx (px) per seguir la mateixa candidatura
+MIN_SCORE_TO_TRACK   = 8.0
+CONFIRM_THRESHOLD    = 45.0
+MAX_CANDIDATE_FRAMES = 20
+CANDIDATE_MAX_DIST   = 55
 
 def get_player_color(player_id):
     return PLAYER_COLORS[(player_id - 1) % len(PLAYER_COLORS)]
-
-def get_player_colormap(player_id):
-    return HEATMAP_COLORMAPS[(player_id - 1) % len(HEATMAP_COLORMAPS)]
 
 
 # 2. QUADRANTS I PROBABILITATS
@@ -350,7 +341,6 @@ class AssignmentBuffer:
     def process(self, lost_ids, unmatched_dets, score_fn, project_fn):
         used_dets = set()
 
-        # Actualitzar candidatures existents
         for pid in list(self._candidates):
             if pid not in lost_ids:
                 del self._candidates[pid]
@@ -376,7 +366,6 @@ class AssignmentBuffer:
             else:
                 cand.mark_missing()
 
-        # Crear candidatures noves
         remaining = [(i, d) for i, d in enumerate(unmatched_dets)
                      if i not in used_dets]
         for pid in lost_ids:
@@ -394,7 +383,6 @@ class AssignmentBuffer:
                 print(f"[BUFFER] Nova candidatura J{pid} "
                       f"(score={best_score:.1f}, necessita {CONFIRM_THRESHOLD})")
 
-        # Recollir confirmades i eliminar caducades
         confirmed, to_del = [], []
         for pid, cand in self._candidates.items():
             if cand.confirmed:
@@ -480,7 +468,6 @@ class Tracker:
 
         matched_det_idx = set()
 
-        # Pas 1: aparellar pistes actives
         for t in self.tracks:
             best_det, best_iou, min_dist = None, IOU_THRESHOLD, 70
             for i, det in enumerate(detections):
@@ -506,10 +493,8 @@ class Tracker:
             else:
                 t["lost"] += 1
 
-        # Pas 2: eliminar pistes massa perdudes
         self.tracks = [t for t in self.tracks if t["lost"] <= MAX_LOST_FRAMES]
 
-        # Pas 3: buffer de confiança per a IDs perduts
         unmatched = [d for i, d in enumerate(detections)
                      if i not in matched_det_idx]
         lost_ids  = sorted(self._lost_ids())
@@ -541,7 +526,6 @@ class Tracker:
         return [t for t in self.tracks if t["lost"] == 0]
 
     def get_ghost_tracks(self):
-        """Pistes perdudes (posició home) + candidatures pendents."""
         active_ids = {t["id"] for t in self.tracks if t["lost"] == 0}
         ghosts = []
 
@@ -569,91 +553,214 @@ class Tracker:
         return ghosts
 
 
-# 8. HEATMAP
-class PlayerHeatmap:
-    def __init__(self, resolution=80):
-        self.res     = resolution
-        self.w_px    = 10 * resolution
-        self.h_px    = 20 * resolution
-        self.RADI_PX = int(resolution * 0.4)
-        self.maps    = {}
+# 8. HEATMAP ──────────────────────────────────────────────────────────────────
 
-    def _ensure(self, pid):
+PLAYER_CMAPS = [
+    cv2.COLORMAP_INFERNO,   # J1: negre → morat → taronja → blanc
+    cv2.COLORMAP_VIRIDIS,   # J2: morat → verd → groc
+    cv2.COLORMAP_OCEAN,     # J3: negre → blau → blanc
+    cv2.COLORMAP_HOT,       # J4: negre → roig → groc → blanc
+]
+ 
+# Colors sòlids per llegenda i mapa combinat (BGR)
+PLAYER_COLORS_SOLID = [
+    (  0, 100, 255),   # J1 taronja
+    ( 80, 220,  80),   # J2 verd
+    (220,  80,  80),   # J3 blau
+    (100, 100, 255),   # J4 roig
+]
+ 
+ 
+class PlayerHeatmap:
+    """
+    Heatmap de presència per jugador amb acumulació gaussiana contínua.
+    - Kernel gaussià 2D pre-calculat (no cercles binaris)
+    - Normalització al percentil 99 + correcció gamma
+    - Colormaps professionals amb fons fosc
+    - Crea les carpetes de destí automàticament
+    """
+ 
+    def __init__(self, resolution: int = 80, sigma_m: float = 0.35):
+        self.res  = resolution
+        self.w_px = 10 * resolution
+        self.h_px = 20 * resolution
+        self.maps: dict[int, np.ndarray] = {}
+ 
+        # Kernel gaussià 2D pre-calculat
+        sigma_px     = sigma_m * resolution
+        ksize        = int(6 * sigma_px) | 1   # senar
+        ksize        = max(ksize, 5)
+        k1d          = cv2.getGaussianKernel(ksize, sigma_px)
+        self._kernel = (k1d @ k1d.T)
+        self._kernel /= self._kernel.max()
+ 
+    # ── Acumulació ────────────────────────────────────────────────────────────
+ 
+    def _ensure(self, pid: int):
         if pid not in self.maps:
             self.maps[pid] = np.zeros((self.h_px, self.w_px), dtype=np.float32)
-
-    def update(self, pid, pos_m):
+ 
+    def update(self, pid: int, pos_m):
         if pos_m is None:
             return
         self._ensure(pid)
-        x_m, y_m = pos_m
-        if -1 <= x_m <= 11 and -1 <= y_m <= 21:
-            px, py = int(x_m * self.res), int(y_m * self.res)
-            if 0 <= px < self.w_px and 0 <= py < self.h_px:
-                cv2.circle(self.maps[pid], (px, py), self.RADI_PX, 1.0, -1)
-
-    def draw_court(self, img):
-        r = self.res
-        h, w = img.shape[:2]
-        cv2.rectangle(img, (0, 0), (w-1, h-1), (255,255,255), 3)
-        cv2.line(img, (0, h//2), (w, h//2), (255,255,255), 4)
-        for y_m in [10 - 6.95, 10 + 6.95]:
-            cv2.line(img, (0, int(y_m*r)), (w, int(y_m*r)), (255,255,255), 2)
-        cv2.line(img, (w//2, int((10-6.95)*r)),
-                 (w//2, int((10+6.95)*r)), (255,255,255), 2)
-
-    def _process(self, raw):
-        blurred = cv2.GaussianBlur(raw, (41, 41), 0)
-        p95 = np.percentile(blurred, 95) or blurred.max()
-        if p95 == 0:
-            return None
-        return (np.clip(blurred, 0, p95) / p95 * 255).astype(np.uint8)
-
-    def save_individual(self, base="heatmap"):
-        for pid, raw in self.maps.items():
-            norm = self._process(raw)
-            if norm is None:
-                continue
-            colored = cv2.applyColorMap(norm, get_player_colormap(pid))
-            self.draw_court(colored)
-            cv2.imwrite(f"{base}_jugador_{pid}.png", colored)
-            print(f"[HEATMAP] Jugador {pid} guardat")
-
-    def save_combined(self, path="heatmap_combinat.png"):
-        if not self.maps:
+        x_m, y_m = float(pos_m[0]), float(pos_m[1])
+        if not (0.0 <= x_m <= 10.0 and 0.0 <= y_m <= 20.0):
             return
-        combined = np.zeros((self.h_px, self.w_px, 3), dtype=np.float32)
-        weight   = np.zeros((self.h_px, self.w_px), dtype=np.float32)
+ 
+        px = int(round(x_m * self.res))
+        py = int(round(y_m * self.res))
+        kh, kw = self._kernel.shape
+        r, c   = kh // 2, kw // 2
+ 
+        y0, y1 = py - r, py + r + 1
+        x0, x1 = px - c, px + c + 1
+        ky0 = max(0, -y0);  ky1 = kh - max(0, y1 - self.h_px)
+        kx0 = max(0, -x0);  kx1 = kw - max(0, x1 - self.w_px)
+        y0 = max(0, y0);    y1 = min(self.h_px, y1)
+        x0 = max(0, x0);    x1 = min(self.w_px, x1)
+ 
+        if y0 < y1 and x0 < x1:
+            self.maps[pid][y0:y1, x0:x1] += self._kernel[ky0:ky1, kx0:kx1]
+ 
+    # ── Processament ─────────────────────────────────────────────────────────
+ 
+    def _process(self, raw: np.ndarray, gamma: float = 0.5):
+        if raw.max() == 0:
+            return None
+        blurred = cv2.GaussianBlur(raw, (0, 0), sigmaX=2.0)
+        p99 = float(np.percentile(blurred, 99))
+        if p99 == 0:
+            p99 = float(blurred.max())
+        if p99 == 0:
+            return None
+        norm = np.power(np.clip(blurred / p99, 0.0, 1.0), gamma)
+        return (norm * 255).astype(np.uint8)
+ 
+    # ── Pista ─────────────────────────────────────────────────────────────────
+ 
+    def draw_court(self, img: np.ndarray, alpha: float = 0.85):
+        overlay = img.copy()
+        r, W    = self.res, (255, 255, 255)
+        h, w    = img.shape[:2]
+        cv2.rectangle(overlay, (0, 0), (w - 1, h - 1), W, 3)
+        cv2.line(overlay, (0, h // 2), (w, h // 2), W, 3)
+        for y_m in [10 - 6.95, 10 + 6.95]:
+            yp = int(round(y_m * r))
+            cv2.line(overlay, (0, yp), (w, yp), W, 1)
+        y_top = int(round((10 - 6.95) * r))
+        y_bot = int(round((10 + 6.95) * r))
+        cv2.line(overlay, (w // 2, y_top), (w // 2, y_bot), W, 1)
+        cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
+ 
+    # ── Guardar ───────────────────────────────────────────────────────────────
+ 
+    def save_individual(self, base: str = "heatmap"):
+        # Crea la carpeta si no existeix
+        folder = os.path.dirname(base)
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+ 
         for pid, raw in self.maps.items():
             norm = self._process(raw)
             if norm is None:
+                print(f"[HEATMAP] J{pid}: sense dades, omès.")
                 continue
-            intensity = norm.astype(np.float32) / 255.0
-            for c, v in enumerate(get_player_color(pid)):
-                combined[:,:,c] += intensity * v
+ 
+            colored = cv2.applyColorMap(norm, PLAYER_CMAPS[(pid - 1) % len(PLAYER_CMAPS)])
+            self.draw_court(colored, alpha=0.75)
+            cv2.putText(
+                colored, f"Jugador {pid}",
+                (8, 26), cv2.FONT_HERSHEY_DUPLEX, 0.7,
+                PLAYER_COLORS_SOLID[(pid - 1) % len(PLAYER_COLORS_SOLID)], 2, cv2.LINE_AA,
+            )
+ 
+            path = f"{base}_jugador_{pid}.png"
+            ok = cv2.imwrite(path, colored)
+            if ok:
+                print(f"[HEATMAP] J{pid} guardat -> {path}")
+            else:
+                print(f"[HEATMAP] ERROR guardant J{pid} -> {path}")
+ 
+    def save_combined(self, path: str = "heatmap_combinat.png"):
+        if not self.maps:
+            print("[HEATMAP] Cap dada per guardar.")
+            return
+ 
+        folder = os.path.dirname(path)
+        if folder:
+            os.makedirs(folder, exist_ok=True)
+ 
+        # Renderitzem cada jugador amb el seu colormap real i fem blend
+        # per intensitat: on un jugador és més present, el seu color domina.
+        combined = np.zeros((self.h_px, self.w_px, 3), dtype=np.float32)
+        weight   = np.zeros((self.h_px, self.w_px),    dtype=np.float32)
+ 
+        for pid, raw in self.maps.items():
+            norm = self._process(raw, gamma=0.45)
+            if norm is None:
+                continue
+ 
+            # Apliquem el colormap individual (amb gradients reals)
+            cmap_id = PLAYER_CMAPS[(pid - 1) % len(PLAYER_CMAPS)]
+            colored = cv2.applyColorMap(norm, cmap_id).astype(np.float32)
+ 
+            # Intensitat = lluminositat percebuda del colormap (proxy)
+            intensity = norm.astype(np.float32) / 255.0  # [0, 1]
+ 
+            for c in range(3):
+                combined[:, :, c] += colored[:, :, c] * intensity
             weight += intensity
+ 
+        # Normalitzem per zones de solapament
         mask = weight > 0
         for c in range(3):
-            combined[:,:,c][mask] = np.clip(
-                combined[:,:,c][mask] / weight[mask] * 255, 0, 255)
+            combined[:, :, c][mask] = np.clip(
+                combined[:, :, c][mask] / weight[mask], 0, 255)
+ 
         result = combined.astype(np.uint8)
-        legend = np.zeros((50, self.w_px, 3), dtype=np.uint8)
-        for pid in sorted(self.maps.keys()):
-            x = (pid-1)*100
-            cv2.rectangle(legend, (x+5,10), (x+25,35), get_player_color(pid), -1)
-            cv2.putText(legend, f"J{pid}", (x+30,28),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, get_player_color(pid), 2)
+        self.draw_court(result, alpha=0.70)
+ 
+        # Llegenda amb mostra del gradient de cada jugador
+        legend_h = 60
+        legend   = np.full((legend_h, self.w_px, 3), (15, 15, 15), dtype=np.uint8)
+        n        = len(self.maps)
+        col_w    = self.w_px // max(n, 1)
+ 
+        for i, pid in enumerate(sorted(self.maps.keys())):
+            cmap_id   = PLAYER_CMAPS[(pid - 1) % len(PLAYER_CMAPS)]
+            color_tip = PLAYER_COLORS_SOLID[(pid - 1) % len(PLAYER_COLORS_SOLID)]
+            x0 = i * col_w + 8
+ 
+            # Barra de gradient petit (mostra el colormap real)
+            bar_w, bar_h = 60, 12
+            gradient = np.linspace(0, 255, bar_w, dtype=np.uint8).reshape(1, bar_w)
+            gradient = np.repeat(gradient, bar_h, axis=0)
+            bar_colored = cv2.applyColorMap(gradient, cmap_id)
+            x1 = min(x0 + bar_w, self.w_px)
+            legend[10:10+bar_h, x0:x1] = bar_colored[:, :x1-x0]
+ 
+            cv2.putText(legend, f"J{pid}", (x0, 50),
+                        cv2.FONT_HERSHEY_DUPLEX, 0.65, color_tip, 1, cv2.LINE_AA)
+ 
         final = np.vstack([result, legend])
-        self.draw_court(final)
-        cv2.imwrite(path, final)
-        print(f"[HEATMAP] Combinat guardat: {path}")
+        ok = cv2.imwrite(path, final)
+        if ok:
+            print(f"[HEATMAP] Combinat guardat -> {path}")
+        else:
+            print(f"[HEATMAP] ERROR guardant combinat -> {path}")
 
 
-# 9. MAIN
+# 9. MAIN ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    video_path    = "Data-Set/padel-data-labels/2022_BCN_FinalM_Retallat_1.mp4"
+    video_path     = "Data-Set/padel-data-labels/2022_BCN_FinalM_Retallat_1.mp4"
     MEDIAN_BG_PATH = "background_median.png"
+    # Rutes de sortida relatives al directori del script
+    _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    OUT_DIR = os.path.normpath(os.path.join(_SCRIPT_DIR, "../../Out/Classic"))
+    OUT_BASE     = os.path.join(OUT_DIR, "heatmap_padel")
+    OUT_COMBINED = os.path.join(OUT_DIR, "heatmap_padel_combinat.png")
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -688,7 +795,6 @@ if __name__ == "__main__":
 
     pause_detector.on_play_start = on_point_start
 
-    # Fons per mediana
     median_bg = MedianBackground(n_frames=150, threshold=18, skip=2)
     median_bg.load(MEDIAN_BG_PATH)
 
@@ -703,7 +809,6 @@ if __name__ == "__main__":
         median_bg.save(MEDIAN_BG_PATH)
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-    # Homografia
     ret, frame = cap.read()
     H = homo.compute_from_frame(frame)
     if H is None:
@@ -736,7 +841,6 @@ if __name__ == "__main__":
         active_tracks = tracker.update(fg_mask)
         ghost_tracks  = tracker.get_ghost_tracks()
 
-        # Dibuixar tracks reals
         for t in active_tracks:
             pid   = t["id"]
             color = get_player_color(pid)
@@ -753,7 +857,6 @@ if __name__ == "__main__":
             pos_m = homo.project_point(t["cx"], t["base_y"])
             heatmap.update(pid, pos_m)
 
-        # Dibuixar ghosts i candidatures
         for g in ghost_tracks:
             if g["cx"] == 0 and g["base_y"] == 0:
                 continue
@@ -762,7 +865,6 @@ if __name__ == "__main__":
             cx, cy = g["cx"], g["base_y"]
 
             if g["ghost"] == "candidate":
-                # Cercle puntejat + barra de progrés
                 for angle in range(0, 360, 30):
                     a1, a2 = math.radians(angle), math.radians(angle + 15)
                     cv2.line(frame,
@@ -781,13 +883,10 @@ if __name__ == "__main__":
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
             heatmap.update(pid, g["pos_m"])
 
-        # Estat MOG2
         estat = "JUGANT" if backSub.is_playing else "PAUSA"
         color_estat = (0, 200, 100) if backSub.is_playing else (0, 120, 255)
         cv2.putText(frame, estat, (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_estat, 2)
-
-        # Debug píxels
         cv2.putText(frame, f"px:{int(pause_detector.motion_pixels)}",
                     (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 0), 1)
 
@@ -799,8 +898,10 @@ if __name__ == "__main__":
 
     cap.release()
     cv2.destroyAllWindows()
-    heatmap.save_individual("E:\VC-PG\Padel_Vision\Out\Classic\heatmap_padel")
-    heatmap.save_combined("E:\VC-PG\Padel_Vision\Out\Classic\heatmap_padel_combinat.png")
+
+    # Guardem els heatmaps (les carpetes es creen automàticament)
+    heatmap.save_individual(OUT_BASE)
+    heatmap.save_combined(OUT_COMBINED)
 
     """
     Frame → MOG2 + Mediana → bitwise_or
